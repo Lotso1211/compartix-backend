@@ -1,0 +1,2 @@
+DB_PASSWORD=tu_password_local_de_postgres
+JWT_SECRET=una_cadena_aleatoria_de_al_menos_32_caracteres
