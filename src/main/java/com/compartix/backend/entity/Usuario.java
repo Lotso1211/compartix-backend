@@ -41,6 +41,12 @@ public class Usuario {
     @Column(nullable = false)
     private Boolean activo = true;
 
+    @Column(name = "codigo_2fa", length = 6)
+    private String codigo2fa;
+
+    @Column(name = "codigo_2fa_expira")
+    private LocalDateTime codigo2faExpira;
+
     @CreationTimestamp
     @Column(name = "creado_en", updatable = false)
     private LocalDateTime creadoEn;

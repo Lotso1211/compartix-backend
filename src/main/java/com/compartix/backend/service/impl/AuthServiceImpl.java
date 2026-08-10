@@ -13,6 +13,7 @@ import com.compartix.backend.repository.RefreshTokenRepository;
 import com.compartix.backend.repository.UsuarioRepository;
 import com.compartix.backend.security.JwtUtil;
 import com.compartix.backend.service.AuthService;
+import com.compartix.backend.service.MailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.web.client.RestTemplate;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -36,12 +38,21 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final AuthenticationManager authenticationManager;
+    private final MailService mailService;
+
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     @Value("${jwt.refresh-expiration}")
     private Long refreshExpiration;
 
     @Value("${google.client-id:}")
     private String googleClientId;
+
+    // El código de verificación por correo solo tiene sentido si el envío de
+    // correo está realmente configurado; si no, el login se completa directo
+    // (evita dejar a los usuarios sin forma de entrar en desarrollo local).
+    @Value("${app.mail.enabled:false}")
+    private boolean mailHabilitado;
 
     @Override
     @Transactional
@@ -74,7 +85,7 @@ public class AuthServiceImpl implements AuthService {
         Usuario usuario = usuarioRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
 
-        return generateAuthResponse(usuario);
+        return mailHabilitado ? iniciar2fa(usuario) : generateAuthResponse(usuario);
     }
 
     @Override
@@ -120,7 +131,54 @@ public class AuthServiceImpl implements AuthService {
                     .build());
         });
 
+        return mailHabilitado ? iniciar2fa(usuario) : generateAuthResponse(usuario);
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse verificarCodigo2fa(String email, String codigo) {
+        Usuario usuario = usuarioRepository.findByEmail(email)
+                .orElseThrow(() -> new UnauthorizedException("Código inválido o expirado"));
+
+        boolean valido = usuario.getCodigo2fa() != null
+                && usuario.getCodigo2fa().equals(codigo)
+                && usuario.getCodigo2faExpira() != null
+                && usuario.getCodigo2faExpira().isAfter(LocalDateTime.now());
+
+        if (!valido) {
+            throw new UnauthorizedException("Código inválido o expirado");
+        }
+
+        usuario.setCodigo2fa(null);
+        usuario.setCodigo2faExpira(null);
+        usuarioRepository.save(usuario);
+
         return generateAuthResponse(usuario);
+    }
+
+    @Override
+    @Transactional
+    public void reenviarCodigo2fa(String email) {
+        Usuario usuario = usuarioRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+        iniciar2fa(usuario);
+    }
+
+    /** Genera y envía por correo un código de 6 dígitos, válido por 10 minutos. */
+    private AuthResponse iniciar2fa(Usuario usuario) {
+        String codigo = String.format("%06d", RANDOM.nextInt(1_000_000));
+        usuario.setCodigo2fa(codigo);
+        usuario.setCodigo2faExpira(LocalDateTime.now().plusMinutes(10));
+        usuarioRepository.save(usuario);
+
+        mailService.enviar(
+                usuario.getEmail(),
+                "Código de verificación",
+                "Tu código de verificación para iniciar sesión en CompartiX es: " + codigo
+                        + "\n\nVence en 10 minutos. Si no intentaste iniciar sesión, ignora este mensaje."
+        );
+
+        return AuthResponse.builder().requiere2fa(true).build();
     }
 
     @Override

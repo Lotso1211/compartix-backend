@@ -3,6 +3,7 @@ package com.compartix.backend.controller;
 import com.compartix.backend.dto.request.GoogleLoginRequest;
 import com.compartix.backend.dto.request.LoginRequest;
 import com.compartix.backend.dto.request.RegisterRequest;
+import com.compartix.backend.dto.request.Verificar2faRequest;
 import com.compartix.backend.dto.response.AuthResponse;
 import com.compartix.backend.service.AuthService;
 import jakarta.validation.Valid;
@@ -31,6 +32,17 @@ public class AuthController {
     @PostMapping("/google")
     public ResponseEntity<AuthResponse> loginConGoogle(@Valid @RequestBody GoogleLoginRequest request) {
         return ResponseEntity.ok(authService.loginConGoogle(request.getIdToken()));
+    }
+
+    @PostMapping("/verificar-2fa")
+    public ResponseEntity<AuthResponse> verificar2fa(@Valid @RequestBody Verificar2faRequest request) {
+        return ResponseEntity.ok(authService.verificarCodigo2fa(request.getEmail(), request.getCodigo()));
+    }
+
+    @PostMapping("/reenviar-2fa")
+    public ResponseEntity<Void> reenviar2fa(@RequestParam String email) {
+        authService.reenviarCodigo2fa(email);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/refresh")

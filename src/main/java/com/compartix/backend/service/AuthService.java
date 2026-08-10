@@ -8,6 +8,8 @@ public interface AuthService {
     AuthResponse register(RegisterRequest request);
     AuthResponse login(LoginRequest request);
     AuthResponse loginConGoogle(String idToken);
+    AuthResponse verificarCodigo2fa(String email, String codigo);
+    void reenviarCodigo2fa(String email);
     AuthResponse refreshToken(String refreshToken);
     void logout(String refreshToken);
 }
