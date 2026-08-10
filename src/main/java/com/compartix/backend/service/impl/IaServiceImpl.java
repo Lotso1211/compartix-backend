@@ -11,6 +11,7 @@ import com.compartix.backend.service.IaService;
 import com.compartix.backend.service.MovimientoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -40,7 +41,8 @@ public class IaServiceImpl implements IaService {
     private final MovimientoService          movimientoService;
     private final RestTemplate               restTemplate;
 
-    private static final String IA_URL = "http://localhost:5000";
+    @Value("${ia.service.url:http://localhost:5000}")
+    private String IA_URL;
 
     // ─────────────────────────────────────────────────────────
     //  Consulta IA (chat)
