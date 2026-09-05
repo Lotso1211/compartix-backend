@@ -508,6 +508,13 @@ public class MovimientoServiceImpl implements MovimientoService {
                 saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(movimiento.getMontoAhorro()));
                 saldoGrupoRepository.save(saldo);
             }
+            case GASTO_DIRECTO -> {
+                saldo.setTotalEgresos(saldo.getTotalEgresos().subtract(montoTotal));
+                saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(montoTotal));
+                saldo.setSaldoCarnaval(saldo.getSaldoCarnaval().add(movimiento.getMontoCarnaval()));
+                saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(movimiento.getMontoAhorro()));
+                saldoGrupoRepository.save(saldo);
+            }
         }
 
         movimientoDetalleRepository.deleteAll(detalles);
@@ -828,6 +835,38 @@ public class MovimientoServiceImpl implements MovimientoService {
 
         movimientoRepository.save(movimiento);
         actualizarSaldoGrupoIngreso(grupoId, montosFondo[0], montosFondo[1]);
+
+        return toMovimientoResponse(movimiento, registradoPor);
+    }
+
+    // ============================================================
+    // REGISTRAR GASTO DIRECTO
+    // ============================================================
+    @Override
+    @Transactional
+    public MovimientoResponse registrarGastoDirecto(Long grupoId, RegistrarGastoDirectoRequest request, Long solicitanteId) {
+        validarDirectiva(grupoId, solicitanteId);
+        BigDecimal[] montosFondo = calcularMontosPorFondo(request.getFondo(), request.getMonto(),
+                request.getMontoCarnaval(), request.getMontoAhorro());
+
+        Grupo grupo = obtenerGrupo(grupoId);
+        Usuario registradoPor = obtenerUsuario(solicitanteId);
+
+        Movimiento movimiento = Movimiento.builder()
+                .grupo(grupo)
+                .registradoPor(registradoPor)
+                .tipo(TipoMovimiento.GASTO_DIRECTO)
+                .descripcion(request.getDescripcion())
+                .montoTotal(request.getMonto())
+                .fecha(request.getFecha())
+                .origenIa(false)
+                .fondo(request.getFondo())
+                .montoCarnaval(montosFondo[0])
+                .montoAhorro(montosFondo[1])
+                .build();
+
+        movimientoRepository.save(movimiento);
+        actualizarSaldoGrupoEgreso(grupoId, montosFondo[0], montosFondo[1]);
 
         return toMovimientoResponse(movimiento, registradoPor);
     }

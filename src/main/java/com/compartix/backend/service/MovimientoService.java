@@ -15,6 +15,7 @@ public interface MovimientoService {
     List<MovimientoResponse> obtenerMovimientosUsuario(Long grupoId, Long usuarioId);
     List<MovimientoDetalleResponse> obtenerDetalleMovimiento(Long grupoId, Long movimientoId, Long usuarioId);
     MovimientoResponse registrarIngresoDirecto(Long grupoId, RegistrarIngresoDirectoRequest request, Long solicitanteId);
+    MovimientoResponse registrarGastoDirecto(Long grupoId, RegistrarGastoDirectoRequest request, Long solicitanteId);
     List<MovimientoDetalleResponse> obtenerMiDetalleMovimiento(Long grupoId, Long movimientoId, Long usuarioId);
 
     /**

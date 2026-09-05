@@ -96,6 +96,16 @@ public class MovimientoController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(movimientoService.registrarIngresoDirecto(grupoId, request, usuarioId));
     }
+
+    @PostMapping("/gasto-directo")
+    public ResponseEntity<MovimientoResponse> registrarGastoDirecto(
+            @PathVariable Long grupoId,
+            @Valid @RequestBody RegistrarGastoDirectoRequest request,
+            @RequestHeader("Authorization") String token) {
+        Long usuarioId = extraerUsuarioId(token);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(movimientoService.registrarGastoDirecto(grupoId, request, usuarioId));
+    }
     @DeleteMapping("/{movimientoId}")
     public ResponseEntity<Void> eliminarMovimiento(
             @PathVariable Long grupoId,

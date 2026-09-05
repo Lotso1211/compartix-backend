@@ -5,6 +5,7 @@ public enum TipoMovimiento {
     GASTO_COMPARTIDO,
     GASTO_INDIVIDUAL,
     MULTA,
-    INGRESO_DIRECTO
+    INGRESO_DIRECTO,
+    GASTO_DIRECTO
 
 }
