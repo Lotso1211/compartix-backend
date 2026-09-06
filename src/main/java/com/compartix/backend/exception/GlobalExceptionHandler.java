@@ -31,16 +31,25 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
-        Map<String, Object> errors = new HashMap<>();
-        errors.put("timestamp", LocalDateTime.now());
-        errors.put("status", HttpStatus.BAD_REQUEST.value());
-
         Map<String, String> fieldErrors = new HashMap<>();
         ex.getBindingResult().getFieldErrors().forEach(error ->
                 fieldErrors.put(error.getField(), error.getDefaultMessage())
         );
-        errors.put("errors", fieldErrors);
-        return ResponseEntity.badRequest().body(errors);
+
+        // El frontend siempre lee "message" (err.error?.message) para mostrar el error
+        // exacto al usuario — sin esto, cualquier campo obligatorio faltante caía en el
+        // mensaje genérico "Error al registrar" en vez del mensaje específico de @NotNull.
+        String message = String.join("; ", fieldErrors.values());
+        if (message.isBlank()) {
+            message = "Hay datos inválidos en el formulario";
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("message", message);
+        body.put("errors", fieldErrors);
+        return ResponseEntity.badRequest().body(body);
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
