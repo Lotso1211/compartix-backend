@@ -66,6 +66,9 @@ public class CuotaProgramada {
     @JoinColumn(name = "movimiento_id")
     private Movimiento movimiento;
 
+    @Column(name = "motivo_anulacion", length = 255)
+    private String motivoAnulacion;
+
     @CreationTimestamp
     @Column(name = "creado_en", updatable = false)
     private LocalDateTime creadoEn;

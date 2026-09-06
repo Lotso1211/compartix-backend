@@ -1,5 +1,6 @@
 package com.compartix.backend.controller;
 
+import com.compartix.backend.dto.request.AnularCuotaRequest;
 import com.compartix.backend.dto.request.CrearPagoProgramadoRequest;
 import com.compartix.backend.dto.request.RegistrarAporteRequest;
 import com.compartix.backend.dto.response.CuotaResponse;
@@ -167,6 +168,10 @@ public class PagoProgramadoController {
         if ("PAGADA".equals(cuota.getEstado())) {
             return ResponseEntity.badRequest().build();
         }
+        if ("ANULADA".equals(cuota.getEstado())) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "Esta cuota está anulada. Revierte la anulación antes de marcarla como pagada.");
+        }
 
         cuota.setEstado("PAGADA");
         cuota.setFechaPago(LocalDate.now());
@@ -209,6 +214,85 @@ public class PagoProgramadoController {
         }
 
         return ResponseEntity.ok(toCuotaResponse(cuota));
+    }
+
+    @PatchMapping("/cuotas/{cuotaId}/anular")
+    @Transactional
+    public ResponseEntity<CuotaResponse> anularCuota(
+            @PathVariable Long grupoId,
+            @PathVariable Long cuotaId,
+            @RequestBody AnularCuotaRequest request,
+            @RequestHeader("Authorization") String token) {
+        validarDirectiva(grupoId, extraerUsuarioId(token));
+
+        CuotaProgramada cuota = cuotaProgramadaRepository.findById(cuotaId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cuota no encontrada"));
+
+        if (!Boolean.TRUE.equals(cuota.getPagoProgramado().getActivo())) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "Este pago programado ya finalizó, no se puede anular una cuota");
+        }
+        if (!"PENDIENTE".equals(cuota.getEstado()) && !"VENCIDA".equals(cuota.getEstado())) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "Solo se pueden anular cuotas pendientes o vencidas");
+        }
+
+        cuota.setEstado("ANULADA");
+        cuota.setMotivoAnulacion(request.getMotivo());
+        cuotaProgramadaRepository.save(cuota);
+
+        return ResponseEntity.ok(toCuotaResponse(cuota));
+    }
+
+    @PatchMapping("/cuotas/{cuotaId}/revertir-anulacion")
+    @Transactional
+    public ResponseEntity<CuotaResponse> revertirAnulacionCuota(
+            @PathVariable Long grupoId,
+            @PathVariable Long cuotaId,
+            @RequestHeader("Authorization") String token) {
+        validarDirectiva(grupoId, extraerUsuarioId(token));
+
+        CuotaProgramada cuota = cuotaProgramadaRepository.findById(cuotaId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cuota no encontrada"));
+
+        if (!Boolean.TRUE.equals(cuota.getPagoProgramado().getActivo())) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "Este pago programado ya finalizó");
+        }
+        if (!"ANULADA".equals(cuota.getEstado())) {
+            throw new com.compartix.backend.exception.BadRequestException("Esta cuota no está anulada");
+        }
+
+        cuota.setEstado("PENDIENTE");
+        cuota.setMotivoAnulacion(null);
+        cuotaProgramadaRepository.save(cuota);
+
+        return ResponseEntity.ok(toCuotaResponse(cuota));
+    }
+
+    /** Historial completo de un pago programado (todas las cuotas, en cualquier estado),
+     *  incluso si el pago ya finalizó — para auditar después del cierre. */
+    @GetMapping("/{pagoProgramadoId}/cuotas")
+    public ResponseEntity<List<CuotaResponse>> obtenerHistorialCuotas(
+            @PathVariable Long grupoId,
+            @PathVariable Long pagoProgramadoId,
+            @RequestHeader("Authorization") String token) {
+        validarDirectiva(grupoId, extraerUsuarioId(token));
+
+        pagoProgramadoRepository.findById(pagoProgramadoId)
+                .filter(p -> p.getGrupo().getId().equals(grupoId))
+                .orElseThrow(() -> new ResourceNotFoundException("Pago programado no encontrado"));
+
+        List<CuotaResponse> cuotas = cuotaProgramadaRepository
+                .findByPagoProgramadoId(pagoProgramadoId).stream()
+                .sorted(java.util.Comparator
+                        .comparing(CuotaProgramada::getAnio)
+                        .thenComparing(CuotaProgramada::getMes)
+                        .thenComparing(c -> c.getUsuario().getNombre()))
+                .map(this::toCuotaResponse)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(cuotas);
     }
 
     /** De un pago finalizado solo se muestran las cuotas pagadas. */
@@ -549,13 +633,9 @@ public class PagoProgramadoController {
         pago.setFechaFin(LocalDate.now());
         pagoProgramadoRepository.save(pago);
 
-        // Al finalizar, las cuotas no pagadas dejan de ser exigibles → se eliminan
-        // para que solo queden las pagadas en el historial.
-        List<CuotaProgramada> noPagadas = cuotaProgramadaRepository
-                .findByPagoProgramadoId(pagoProgramadoId).stream()
-                .filter(c -> !"PAGADA".equals(c.getEstado()))
-                .collect(Collectors.toList());
-        cuotaProgramadaRepository.deleteAll(noPagadas);
+        // Las cuotas no pagadas dejan de ser exigibles (ya no cuentan como deuda ni
+        // generan mora), pero se conservan tal cual quedaron para el historial —
+        // ver GET /{pagoProgramadoId}/cuotas.
 
         notificacionService.notificarPagoProgramadoFinalizado(pago.getGrupo(), pago.getNombre());
 
@@ -635,6 +715,7 @@ public class PagoProgramadoController {
                 .fechaPago(c.getFechaPago())
                 .multaAplicada(c.getMultaAplicada())
                 .montoMulta(c.getMontoMulta())
+                .motivoAnulacion(c.getMotivoAnulacion())
                 .build();
     }
 

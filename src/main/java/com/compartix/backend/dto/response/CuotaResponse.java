@@ -22,4 +22,5 @@ public class CuotaResponse {
     private LocalDate fechaPago;
     private Boolean multaAplicada;
     private BigDecimal montoMulta;
+    private String motivoAnulacion;
 }
