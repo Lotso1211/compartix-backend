@@ -9,5 +9,6 @@ public enum TipoNotificacion {
     MORA_CUOTA,
     FONDO_BAJO,
     GRUPO,
-    PEDIDO
+    PEDIDO,
+    SOLICITUD_PAGO
 }

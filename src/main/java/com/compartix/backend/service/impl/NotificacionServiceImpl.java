@@ -191,6 +191,36 @@ public class NotificacionServiceImpl implements NotificacionService {
                         + monto + " " + grupo.getMoneda() + ".");
     }
 
+    @Override
+    @Transactional
+    public void notificarSolicitudPago(Grupo grupo, Usuario solicitante, String detalle, BigDecimal monto) {
+        String titulo = "🧾 Nuevo comprobante para revisar";
+        String mensaje = solicitante.getNombre() + " " + solicitante.getApellido() + " subió un comprobante de "
+                + detalle + " por " + monto + " " + grupo.getMoneda() + " en " + grupo.getNombre()
+                + ". Revísalo en la pestaña Solicitudes.";
+        for (GrupoMiembro directiva : grupoMiembroRepository
+                .findByGrupoIdAndRolAndActivoTrue(grupo.getId(), RolGrupo.DIRECTIVA)) {
+            crearYEnviar(directiva.getUsuario(), grupo, TipoNotificacion.SOLICITUD_PAGO, titulo, mensaje);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void notificarSolicitudRechazada(Usuario usuario, Grupo grupo, String detalle, String motivo) {
+        String mensaje = "Tu comprobante de " + detalle + " en " + grupo.getNombre() + " fue rechazado"
+                + (motivo != null && !motivo.isBlank() ? ": " + motivo : ".")
+                + " Puedes volver a subir uno.";
+        crearYEnviar(usuario, grupo, TipoNotificacion.SOLICITUD_PAGO, "❌ Comprobante rechazado", mensaje);
+    }
+
+    @Override
+    @Transactional
+    public void notificarMultaPagada(Usuario usuario, Grupo grupo, BigDecimal monto, String motivo) {
+        crearYEnviar(usuario, grupo, TipoNotificacion.MULTA, "✅ Multa pagada",
+                "Se confirmó el pago de tu multa \"" + motivo + "\" (" + monto + " " + grupo.getMoneda()
+                        + ") en " + grupo.getNombre() + ".");
+    }
+
     private void crearYEnviar(Usuario usuario, Grupo grupo, TipoNotificacion tipo, String titulo, String mensaje) {
         Notificacion n = Notificacion.builder()
                 .usuario(usuario)

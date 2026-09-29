@@ -54,4 +54,13 @@ public interface NotificacionService {
 
     /** Hook usado al cerrar un pedido, por cada miembro con un subtotal asignado. */
     void notificarPedidoCerrado(Usuario usuario, Grupo grupo, String nombrePedido, BigDecimal monto);
+
+    /** Hook usado cuando un miembro sube el comprobante de un pago (cuota o multa). Avisa a la Directiva. */
+    void notificarSolicitudPago(Grupo grupo, Usuario solicitante, String detalle, BigDecimal monto);
+
+    /** Hook usado cuando la directiva rechaza una solicitud de pago. Avisa al miembro. */
+    void notificarSolicitudRechazada(Usuario usuario, Grupo grupo, String detalle, String motivo);
+
+    /** Hook usado al confirmarse el pago de una multa (directo o vía solicitud aprobada). */
+    void notificarMultaPagada(Usuario usuario, Grupo grupo, BigDecimal monto, String motivo);
 }

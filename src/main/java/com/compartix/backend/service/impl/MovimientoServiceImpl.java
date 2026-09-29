@@ -289,7 +289,8 @@ public class MovimientoServiceImpl implements MovimientoService {
     @Transactional
     public MovimientoResponse registrarPagoCuota(Long grupoId, Long usuarioId, BigDecimal montoCarnaval,
                                                  BigDecimal montoAhorro, String descripcion,
-                                                 Long solicitanteId, java.time.LocalDate fecha) {
+                                                 Long solicitanteId, java.time.LocalDate fecha,
+                                                 String comprobanteUrl) {
         Grupo grupo = obtenerGrupo(grupoId);
         Usuario usuario = obtenerUsuario(usuarioId);
         Usuario registradoPor = obtenerUsuario(solicitanteId);
@@ -314,6 +315,7 @@ public class MovimientoServiceImpl implements MovimientoService {
                 .fondo(fondo)
                 .montoCarnaval(montoCarnaval)
                 .montoAhorro(montoAhorro)
+                .comprobanteUrl(comprobanteUrl)
                 .build();
         movimientoRepository.save(movimiento);
 

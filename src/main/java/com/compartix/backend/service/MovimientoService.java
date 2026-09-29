@@ -30,10 +30,12 @@ public interface MovimientoService {
      * Registra el pago de una cuota repartiendo el monto entre Carnaval y Ahorro.
      * Ambos suman al kardex del miembro (carnaval→totalAportes, ahorro→totalAhorro) y al
      * saldo del grupo, manteniendo el desglose por fondo (saldoCarnaval / saldoAhorro).
+     * comprobanteUrl puede ser null (pago marcado directamente por la directiva, sin
+     * comprobante — ej. efectivo en persona).
      */
     MovimientoResponse registrarPagoCuota(Long grupoId, Long usuarioId, java.math.BigDecimal montoCarnaval,
                                           java.math.BigDecimal montoAhorro, String descripcion,
-                                          Long solicitanteId, java.time.LocalDate fecha);
+                                          Long solicitanteId, java.time.LocalDate fecha, String comprobanteUrl);
 
     /**
      * Elimina un movimiento y revierte por completo su efecto: kardex del/los miembro(s)

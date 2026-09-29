@@ -43,6 +43,7 @@ public class PagoProgramadoController {
     private final MultaRepository multaRepository;
     private final MovimientoRepository movimientoRepository;
     private final MovimientoService movimientoService;
+    private final com.compartix.backend.service.PagoVerificacionService pagoVerificacionService;
     private final com.compartix.backend.service.NotificacionService notificacionService;
     private final com.compartix.backend.service.VerificacionMultasService verificacionMultasService;
     private final JwtUtil jwtUtil;
@@ -162,58 +163,10 @@ public class PagoProgramadoController {
         Long usuarioId = extraerUsuarioId(token);
         validarDirectiva(grupoId, usuarioId);
 
-        CuotaProgramada cuota = cuotaProgramadaRepository.findById(cuotaId)
-                .orElseThrow(() -> new ResourceNotFoundException("Cuota no encontrada"));
-
-        if ("PAGADA".equals(cuota.getEstado())) {
-            return ResponseEntity.badRequest().build();
-        }
-        if ("ANULADA".equals(cuota.getEstado())) {
-            throw new com.compartix.backend.exception.BadRequestException(
-                    "Esta cuota está anulada. Revierte la anulación antes de marcarla como pagada.");
-        }
-
-        cuota.setEstado("PAGADA");
-        cuota.setFechaPago(LocalDate.now());
-        cuotaProgramadaRepository.save(cuota);
-
-        // 1) La cuota se registra como APORTE repartido en Carnaval + Ahorro: genera un
-        //    movimiento (extracto), suma al kardex del miembro (carnaval→aportes,
-        //    ahorro→totalAhorro) y al saldo del grupo manteniendo el desglose por fondo.
-        String descripcion = "Pago de cuota: " + cuota.getPagoProgramado().getNombre()
-                + " (" + getNombreMes(cuota.getMes()) + " " + cuota.getAnio() + ")";
-        var movPago = movimientoService.registrarPagoCuota(grupoId, cuota.getUsuario().getId(),
-                cuota.getMontoCarnaval(), cuota.getMontoAhorro(), descripcion,
-                usuarioId, LocalDate.now());
-
-        // Vincula el movimiento generado con la cuota para poder revertir el pago si se elimina.
-        movimientoRepository.findById(movPago.getId()).ifPresent(cuota::setMovimiento);
-        cuotaProgramadaRepository.save(cuota);
-
-        notificacionService.notificarCuotaPagada(cuota.getUsuario(), cuota.getGrupo(), cuota.getMonto(),
-                getNombreMes(cuota.getMes()), cuota.getAnio());
-
-        // 2) La multa va SOLO al fondo del grupo (intencional: no afecta el kardex personal).
-        //    Se registra como un Movimiento (tipo MULTA, afectaKardex=false) para que
-        //    aparezca en el extracto y los reportes, y suma al fondo del grupo.
-        if (cuota.getMultaAplicada() && cuota.getMontoMulta() != null
-                && cuota.getMontoMulta().compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal montoMulta = cuota.getMontoMulta();
-
-            movimientoService.registrarMultaCuota(grupoId, cuota.getUsuario().getId(), montoMulta,
-                    "Multa por mora — cuota " + getNombreMes(cuota.getMes()) + " " + cuota.getAnio(),
-                    usuarioId, LocalDate.now());
-
-            // Limpiar el indicador de multa pendiente en el kardex (sin bajar de 0).
-            kardexRepository.findByGrupoIdAndUsuarioId(grupoId, cuota.getUsuario().getId())
-                    .ifPresent(kardex -> {
-                        BigDecimal restante = kardex.getTotalMultas().subtract(montoMulta);
-                        kardex.setTotalMultas(restante.max(BigDecimal.ZERO));
-                        kardexRepository.save(kardex);
-                    });
-        }
-
-        return ResponseEntity.ok(toCuotaResponse(cuota));
+        // Marcado directo por la directiva (sin comprobante, ej. efectivo en persona).
+        // Misma lógica que al aprobar una solicitud de pago — ver PagoVerificacionService.
+        CuotaResponse response = pagoVerificacionService.confirmarPagoCuota(grupoId, cuotaId, usuarioId, null);
+        return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/cuotas/{cuotaId}/anular")
@@ -392,7 +345,7 @@ public class PagoProgramadoController {
         if (info.getTotal().compareTo(BigDecimal.ZERO) > 0) {
             movimientoService.registrarPagoCuota(grupoId, usuarioId,
                     info.getCarnavalAdeudado(), info.getAhorroAdeudado(),
-                    "Reactivación — ponerse al día", solicitanteId, LocalDate.now());
+                    "Reactivación — ponerse al día", solicitanteId, LocalDate.now(), null);
         }
 
         gm.setActivo(true);

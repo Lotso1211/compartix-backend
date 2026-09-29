@@ -18,7 +18,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -31,6 +30,7 @@ public class MultaController {
     private final KardexRepository kardexRepository;
     private final SaldoGrupoRepository saldoGrupoRepository;
     private final GrupoMiembroRepository grupoMiembroRepository;
+    private final com.compartix.backend.service.PagoVerificacionService pagoVerificacionService;
     private final JwtUtil jwtUtil;
 
     @GetMapping
@@ -68,35 +68,10 @@ public class MultaController {
         Long usuarioId = extraerUsuarioId(token);
         validarDirectiva(grupoId, usuarioId);
 
-        Multa multa = multaRepository.findById(multaId)
-                .orElseThrow(() -> new RuntimeException("Multa no encontrada"));
-
-        if ("PAGADA".equals(multa.getEstado())) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        // Marcar como pagada
-        multa.setEstado("PAGADA");
-        multa.setFechaPago(LocalDate.now());
-        multaRepository.save(multa);
-
-        // El indicador de "debe" desaparece del kardex personal; el monto NO se acredita
-        // al saldo del miembro (la multa nunca fue plata suya, era del fondo del grupo).
-        kardexRepository.findByGrupoIdAndUsuarioId(grupoId, multa.getUsuario().getId())
-                .ifPresent(kardex -> {
-                    kardex.setTotalMultas(kardex.getTotalMultas().subtract(multa.getMonto()).max(BigDecimal.ZERO));
-                    kardexRepository.save(kardex);
-                });
-
-        // Recién ahora, al pagarse, se acredita al fondo de ahorro del grupo.
-        saldoGrupoRepository.findByGrupoId(grupoId).ifPresent(saldo -> {
-            saldo.setTotalMultas(saldo.getTotalMultas().add(multa.getMonto()));
-            saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(multa.getMonto()));
-            saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(multa.getMonto()));
-            saldoGrupoRepository.save(saldo);
-        });
-
-        return ResponseEntity.ok(toResponse(multa));
+        // Marcado directo por la directiva (sin comprobante, ej. efectivo en persona).
+        // Misma lógica que al aprobar una solicitud de pago — ver PagoVerificacionService.
+        MultaResponse response = pagoVerificacionService.confirmarPagoMulta(grupoId, multaId, usuarioId);
+        return ResponseEntity.ok(response);
     }
 
 
