@@ -1,6 +1,7 @@
 package com.compartix.backend.controller;
 
 import com.compartix.backend.dto.request.CrearPedidoRequest;
+import com.compartix.backend.dto.request.MiPedidoRequest;
 import com.compartix.backend.dto.response.PedidoResponse;
 import com.compartix.backend.entity.*;
 import com.compartix.backend.exception.ResourceNotFoundException;
@@ -187,6 +188,62 @@ public class PedidoController {
         }
 
         return ResponseEntity.ok(toPedidoResponse(pedido, (Long) null));
+    }
+
+    /**
+     * Un miembro registra/actualiza SUS PROPIAS cantidades en un pedido abierto —
+     * reemplaza únicamente sus filas de PedidoDetalle, sin tocar las de los demás
+     * miembros ni el catálogo de items (que sigue siendo responsabilidad de la directiva).
+     */
+    @PutMapping("/{pedidoId}/mi-pedido")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<PedidoResponse> actualizarMiPedido(
+            @PathVariable Long grupoId,
+            @PathVariable Long pedidoId,
+            @RequestBody MiPedidoRequest request,
+            @RequestHeader("Authorization") String token) {
+        Long usuarioId = extraerUsuarioId(token);
+        validarMiembro(grupoId, usuarioId);
+
+        Pedido pedido = pedidoRepository.findById(pedidoId)
+                .filter(p -> p.getGrupo().getId().equals(grupoId))
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
+
+        if (!"ABIERTO".equals(pedido.getEstado())) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "Este pedido ya está cerrado, no se puede modificar");
+        }
+
+        Usuario usuario = usuarioRepository.findById(usuarioId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
+
+        pedidoDetalleRepository.deleteAll(
+                pedidoDetalleRepository.findByPedidoIdAndUsuarioId(pedidoId, usuarioId));
+        pedidoDetalleRepository.flush();
+
+        Map<Long, Integer> cantidades = request.getCantidades() != null
+                ? request.getCantidades() : java.util.Collections.emptyMap();
+
+        for (var entry : cantidades.entrySet()) {
+            Integer cantidad = entry.getValue();
+            if (cantidad == null || cantidad <= 0) continue;
+
+            PedidoItem item = pedidoItemRepository.findById(entry.getKey())
+                    .filter(i -> i.getPedido().getId().equals(pedidoId))
+                    .orElseThrow(() -> new ResourceNotFoundException("Item no encontrado en este pedido"));
+
+            BigDecimal subtotal = item.getPrecioUnitario().multiply(BigDecimal.valueOf(cantidad));
+            PedidoDetalle detalle = PedidoDetalle.builder()
+                    .pedido(pedido)
+                    .item(item)
+                    .usuario(usuario)
+                    .cantidad(cantidad)
+                    .subtotal(subtotal)
+                    .build();
+            pedidoDetalleRepository.save(detalle);
+        }
+
+        return ResponseEntity.ok(toPedidoResponse(pedido, usuarioId));
     }
 
     @PatchMapping("/{pedidoId}/cerrar")
