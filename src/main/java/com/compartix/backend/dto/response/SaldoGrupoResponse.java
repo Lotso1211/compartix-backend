@@ -21,5 +21,6 @@ public class SaldoGrupoResponse {
     private BigDecimal saldoDisponible;
     private BigDecimal saldoCarnaval;
     private BigDecimal saldoAhorro;
+    private BigDecimal saldoComun;
     private LocalDateTime actualizadoEn;
 }

@@ -478,10 +478,10 @@ public class MovimientoServiceImpl implements MovimientoService {
                 Multa multaManual = multaRepository.findByMovimientoId(movimientoId).orElse(null);
                 if (multaManual != null) {
                     if ("PAGADA".equals(multaManual.getEstado())) {
-                        // Ya se acreditó al fondo al pagarla: se revierte el fondo.
+                        // Ya se acreditó al Fondo Común al pagarla: se revierte el fondo.
                         saldo.setTotalMultas(saldo.getTotalMultas().subtract(montoTotal));
                         saldo.setSaldoDisponible(saldo.getSaldoDisponible().subtract(montoTotal));
-                        saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(montoTotal));
+                        saldo.setSaldoComun(saldo.getSaldoComun().subtract(montoTotal));
                         saldoGrupoRepository.save(saldo);
                     } else {
                         // Aún pendiente: el fondo nunca se tocó, solo baja el indicador del kardex.
@@ -499,22 +499,30 @@ public class MovimientoServiceImpl implements MovimientoService {
                     // no se toca aquí.
                     saldo.setTotalMultas(saldo.getTotalMultas().subtract(montoTotal));
                     saldo.setSaldoDisponible(saldo.getSaldoDisponible().subtract(montoTotal));
-                    saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(montoTotal));
+                    saldo.setSaldoComun(saldo.getSaldoComun().subtract(montoTotal));
                     saldoGrupoRepository.save(saldo);
                 }
             }
             case INGRESO_DIRECTO -> {
                 saldo.setTotalIngresos(saldo.getTotalIngresos().subtract(montoTotal));
                 saldo.setSaldoDisponible(saldo.getSaldoDisponible().subtract(montoTotal));
-                saldo.setSaldoCarnaval(saldo.getSaldoCarnaval().subtract(movimiento.getMontoCarnaval()));
-                saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(movimiento.getMontoAhorro()));
+                if (movimiento.getFondo() == TipoFondo.COMUN) {
+                    saldo.setSaldoComun(saldo.getSaldoComun().subtract(montoTotal));
+                } else {
+                    saldo.setSaldoCarnaval(saldo.getSaldoCarnaval().subtract(movimiento.getMontoCarnaval()));
+                    saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(movimiento.getMontoAhorro()));
+                }
                 saldoGrupoRepository.save(saldo);
             }
             case GASTO_DIRECTO -> {
                 saldo.setTotalEgresos(saldo.getTotalEgresos().subtract(montoTotal));
                 saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(montoTotal));
-                saldo.setSaldoCarnaval(saldo.getSaldoCarnaval().add(movimiento.getMontoCarnaval()));
-                saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(movimiento.getMontoAhorro()));
+                if (movimiento.getFondo() == TipoFondo.COMUN) {
+                    saldo.setSaldoComun(saldo.getSaldoComun().add(montoTotal));
+                } else {
+                    saldo.setSaldoCarnaval(saldo.getSaldoCarnaval().add(movimiento.getMontoCarnaval()));
+                    saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(movimiento.getMontoAhorro()));
+                }
                 saldoGrupoRepository.save(saldo);
             }
         }
@@ -661,6 +669,7 @@ public class MovimientoServiceImpl implements MovimientoService {
             return new BigDecimal[]{mc, ma};
         }
         if (fondo == TipoFondo.CARNAVAL) return new BigDecimal[]{montoTotal, BigDecimal.ZERO};
+        if (fondo == TipoFondo.COMUN) return new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO};
         return new BigDecimal[]{BigDecimal.ZERO, montoTotal}; // AHORRO
     }
 
@@ -676,8 +685,30 @@ public class MovimientoServiceImpl implements MovimientoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Saldo del grupo no encontrado"));
         saldo.setTotalMultas(saldo.getTotalMultas().add(monto));
         saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(monto));
-        // Las multas engrosan el fondo de ahorro/comparsa
-        saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(monto));
+        // Las multas engrosan el Fondo Común (junto con los ingresos por votación)
+        saldo.setSaldoComun(saldo.getSaldoComun().add(monto));
+        saldoGrupoRepository.save(saldo);
+    }
+
+    private void actualizarSaldoGrupoIngresoComun(Long grupoId, BigDecimal monto) {
+        SaldoGrupo saldo = saldoGrupoRepository.findByGrupoId(grupoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Saldo del grupo no encontrado"));
+        saldo.setTotalIngresos(saldo.getTotalIngresos().add(monto));
+        saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(monto));
+        saldo.setSaldoComun(saldo.getSaldoComun().add(monto));
+        saldoGrupoRepository.save(saldo);
+    }
+
+    private void actualizarSaldoGrupoEgresoComun(Long grupoId, BigDecimal monto) {
+        SaldoGrupo saldo = saldoGrupoRepository.findByGrupoId(grupoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Saldo del grupo no encontrado"));
+        if (saldo.getSaldoComun().compareTo(monto) < 0) {
+            throw new BadRequestException("El Fondo Común no tiene saldo suficiente (disponible: "
+                    + saldo.getSaldoComun() + ", solicitado: " + monto + ")");
+        }
+        saldo.setTotalEgresos(saldo.getTotalEgresos().add(monto));
+        saldo.setSaldoDisponible(saldo.getSaldoDisponible().subtract(monto));
+        saldo.setSaldoComun(saldo.getSaldoComun().subtract(monto));
         saldoGrupoRepository.save(saldo);
     }
 
@@ -836,7 +867,11 @@ public class MovimientoServiceImpl implements MovimientoService {
                 .build();
 
         movimientoRepository.save(movimiento);
-        actualizarSaldoGrupoIngreso(grupoId, montosFondo[0], montosFondo[1]);
+        if (request.getFondo() == TipoFondo.COMUN) {
+            actualizarSaldoGrupoIngresoComun(grupoId, request.getMonto());
+        } else {
+            actualizarSaldoGrupoIngreso(grupoId, montosFondo[0], montosFondo[1]);
+        }
 
         return toMovimientoResponse(movimiento, registradoPor);
     }
@@ -868,7 +903,11 @@ public class MovimientoServiceImpl implements MovimientoService {
                 .build();
 
         movimientoRepository.save(movimiento);
-        actualizarSaldoGrupoEgreso(grupoId, montosFondo[0], montosFondo[1]);
+        if (request.getFondo() == TipoFondo.COMUN) {
+            actualizarSaldoGrupoEgresoComun(grupoId, request.getMonto());
+        } else {
+            actualizarSaldoGrupoEgreso(grupoId, montosFondo[0], montosFondo[1]);
+        }
 
         return toMovimientoResponse(movimiento, registradoPor);
     }

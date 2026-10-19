@@ -43,6 +43,12 @@ public class SaldoGrupo {
     @Column(name = "saldo_ahorro", nullable = false, precision = 10, scale = 2)
     private BigDecimal saldoAhorro = BigDecimal.ZERO;
 
+    // Fondo común: multas y "votaciones" (decisiones grupales de cobrar algo extra),
+    // separado del fondo de ahorro.
+    @Builder.Default
+    @Column(name = "saldo_comun", nullable = false, precision = 10, scale = 2)
+    private BigDecimal saldoComun = BigDecimal.ZERO;
+
     @UpdateTimestamp
     @Column(name = "actualizado_en")
     private LocalDateTime actualizadoEn;

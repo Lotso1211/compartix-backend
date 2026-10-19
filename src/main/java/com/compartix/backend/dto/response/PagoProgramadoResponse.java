@@ -21,4 +21,9 @@ public class PagoProgramadoResponse {
     private BigDecimal montoMulta;
     private BigDecimal porcentajeMulta;
     private Boolean activo;
+    // Meta de carnaval (opcional)
+    private BigDecimal cupoCarnavalUsd;
+    private BigDecimal tipoCambio;
+    private Integer mesesRestantesCarnaval;
+    private BigDecimal cupoCarnavalBs;
 }

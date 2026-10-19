@@ -97,11 +97,11 @@ public class MultaController {
                         kardexRepository.save(kardex);
                     });
         } else {
-            // Ya estaba PAGADA: el fondo sí se acreditó al pagarla, ahora se revierte.
+            // Ya estaba PAGADA: el Fondo Común sí se acreditó al pagarla, ahora se revierte.
             saldoGrupoRepository.findByGrupoId(grupoId).ifPresent(saldo -> {
                 saldo.setTotalMultas(saldo.getTotalMultas().subtract(monto));
                 saldo.setSaldoDisponible(saldo.getSaldoDisponible().subtract(monto));
-                saldo.setSaldoAhorro(saldo.getSaldoAhorro().subtract(monto));
+                saldo.setSaldoComun(saldo.getSaldoComun().subtract(monto));
                 saldoGrupoRepository.save(saldo);
             });
         }

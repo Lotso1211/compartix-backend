@@ -61,6 +61,18 @@ public class PagoProgramado {
     @Column(nullable = false)
     private Boolean activo = true;
 
+    // Meta de carnaval (opcional): cupo en USD que cada socio debe alcanzar,
+    // convertido a Bs con el tipo de cambio, y en cuántos meses restantes se espera
+    // completarlo. Solo se usa si la directiva configura estos 3 campos.
+    @Column(name = "cupo_carnaval_usd", precision = 10, scale = 2)
+    private BigDecimal cupoCarnavalUsd;
+
+    @Column(name = "tipo_cambio", precision = 10, scale = 4)
+    private BigDecimal tipoCambio;
+
+    @Column(name = "meses_restantes_carnaval")
+    private Integer mesesRestantesCarnaval;
+
     @CreationTimestamp
     @Column(name = "creado_en", updatable = false)
     private LocalDateTime creadoEn;

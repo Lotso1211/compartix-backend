@@ -153,6 +153,7 @@ public class GrupoServiceImpl implements GrupoService {
                 .saldoDisponible(saldo.getSaldoDisponible())
                 .saldoCarnaval(saldo.getSaldoCarnaval())
                 .saldoAhorro(saldo.getSaldoAhorro())
+                .saldoComun(saldo.getSaldoComun())
                 .actualizadoEn(saldo.getActualizadoEn())
                 .build();
     }

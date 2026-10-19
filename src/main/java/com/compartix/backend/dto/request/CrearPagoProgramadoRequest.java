@@ -19,4 +19,8 @@ public class CrearPagoProgramadoRequest {
     private String tipoMulta;
     private BigDecimal montoMulta;
     private BigDecimal porcentajeMulta;
+    // Meta de carnaval (opcional)
+    private BigDecimal cupoCarnavalUsd;
+    private BigDecimal tipoCambio;
+    private Integer mesesRestantesCarnaval;
 }

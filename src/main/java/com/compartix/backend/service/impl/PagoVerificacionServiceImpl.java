@@ -117,11 +117,11 @@ public class PagoVerificacionServiceImpl implements PagoVerificacionService {
                     kardexRepository.save(kardex);
                 });
 
-        // Recién ahora, al pagarse, se acredita al fondo de ahorro del grupo.
+        // Recién ahora, al pagarse, se acredita al Fondo Común del grupo.
         saldoGrupoRepository.findByGrupoId(grupoId).ifPresent(saldo -> {
             saldo.setTotalMultas(saldo.getTotalMultas().add(multa.getMonto()));
             saldo.setSaldoDisponible(saldo.getSaldoDisponible().add(multa.getMonto()));
-            saldo.setSaldoAhorro(saldo.getSaldoAhorro().add(multa.getMonto()));
+            saldo.setSaldoComun(saldo.getSaldoComun().add(multa.getMonto()));
             saldoGrupoRepository.save(saldo);
         });
 

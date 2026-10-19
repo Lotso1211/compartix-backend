@@ -2,8 +2,10 @@ package com.compartix.backend.controller;
 
 import com.compartix.backend.dto.request.AnularCuotaRequest;
 import com.compartix.backend.dto.request.CrearPagoProgramadoRequest;
+import com.compartix.backend.dto.request.EditarRepartoRequest;
 import com.compartix.backend.dto.request.RegistrarAporteRequest;
 import com.compartix.backend.dto.response.CuotaResponse;
+import com.compartix.backend.dto.response.MetaPendienteResponse;
 import com.compartix.backend.dto.response.PagoProgramadoResponse;
 import com.compartix.backend.dto.response.ReactivacionInfoResponse;
 import com.compartix.backend.entity.CuotaProgramada;
@@ -11,6 +13,8 @@ import com.compartix.backend.entity.Grupo;
 import com.compartix.backend.entity.GrupoMiembro;
 import com.compartix.backend.entity.Kardex;
 import com.compartix.backend.entity.PagoProgramado;
+import com.compartix.backend.entity.Pedido;
+import com.compartix.backend.entity.PedidoDetalle;
 import com.compartix.backend.exception.ResourceNotFoundException;
 import com.compartix.backend.exception.UnauthorizedException;
 import com.compartix.backend.repository.*;
@@ -23,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -41,6 +46,8 @@ public class PagoProgramadoController {
     private final KardexRepository kardexRepository;
     private final SaldoGrupoRepository saldoGrupoRepository;
     private final MultaRepository multaRepository;
+    private final PedidoRepository pedidoRepository;
+    private final PedidoDetalleRepository pedidoDetalleRepository;
     private final MovimientoRepository movimientoRepository;
     private final MovimientoService movimientoService;
     private final com.compartix.backend.service.PagoVerificacionService pagoVerificacionService;
@@ -94,12 +101,153 @@ public class PagoProgramadoController {
                 .montoMulta(request.getMontoMulta())
                 .porcentajeMulta(request.getPorcentajeMulta())
                 .activo(true)
+                .cupoCarnavalUsd(request.getCupoCarnavalUsd())
+                .tipoCambio(request.getTipoCambio())
+                .mesesRestantesCarnaval(request.getMesesRestantesCarnaval())
                 .build();
         pagoProgramadoRepository.save(pago);
 
         generarCuotas(pago, grupo);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(pago));
+    }
+
+    /**
+     * Edita el reparto Carnaval/Ahorro (y opcionalmente la meta de cupo de carnaval)
+     * de un pago programado ya creado. Solo afecta las cuotas que siguen PENDIENTE o
+     * VENCIDA — las que ya se pagaron quedan tal como estaban cuando se pagaron.
+     */
+    @PatchMapping("/{pagoProgramadoId}")
+    @Transactional
+    public ResponseEntity<PagoProgramadoResponse> editarReparto(
+            @PathVariable Long grupoId,
+            @PathVariable Long pagoProgramadoId,
+            @RequestBody EditarRepartoRequest request,
+            @RequestHeader("Authorization") String token) {
+        validarDirectiva(grupoId, extraerUsuarioId(token));
+
+        PagoProgramado pago = pagoProgramadoRepository.findById(pagoProgramadoId)
+                .filter(p -> p.getGrupo().getId().equals(grupoId))
+                .orElseThrow(() -> new ResourceNotFoundException("Pago programado no encontrado"));
+
+        if (request.getMontoCarnaval() == null || request.getMontoAhorro() == null) {
+            throw new com.compartix.backend.exception.BadRequestException(
+                    "El monto de Carnaval y de Ahorro son obligatorios");
+        }
+
+        pago.setMontoCarnaval(request.getMontoCarnaval());
+        pago.setMontoAhorro(request.getMontoAhorro());
+        pago.setMontoMensual(request.getMontoCarnaval().add(request.getMontoAhorro()));
+        if (request.getCupoCarnavalUsd() != null) pago.setCupoCarnavalUsd(request.getCupoCarnavalUsd());
+        if (request.getTipoCambio() != null) pago.setTipoCambio(request.getTipoCambio());
+        if (request.getMesesRestantesCarnaval() != null) {
+            pago.setMesesRestantesCarnaval(request.getMesesRestantesCarnaval());
+        }
+        pagoProgramadoRepository.save(pago);
+
+        List<CuotaProgramada> pendientes = cuotaProgramadaRepository.findByPagoProgramadoId(pagoProgramadoId)
+                .stream()
+                .filter(c -> "PENDIENTE".equals(c.getEstado()) || "VENCIDA".equals(c.getEstado()))
+                .collect(Collectors.toList());
+        for (CuotaProgramada cuota : pendientes) {
+            GrupoMiembro miembro = grupoMiembroRepository
+                    .findByGrupoIdAndUsuarioId(grupoId, cuota.getUsuario().getId())
+                    .orElse(null);
+            if (miembro == null) continue;
+            BigDecimal[] split = calcularSplitCuota(pago, miembro);
+            cuota.setMontoCarnaval(split[0]);
+            cuota.setMontoAhorro(split[1]);
+            cuota.setMonto(split[0].add(split[1]));
+            cuotaProgramadaRepository.save(cuota);
+        }
+
+        return ResponseEntity.ok(toResponse(pago));
+    }
+
+    /**
+     * Metas pendientes de cada socio: avance del cupo de carnaval (si está
+     * configurado) y lo que le toca en cada Pedido todavía abierto. Informativo —
+     * no cambia ninguna cuota por sí solo.
+     */
+    @GetMapping("/{pagoProgramadoId}/metas-pendientes")
+    public ResponseEntity<List<MetaPendienteResponse>> obtenerMetasPendientes(
+            @PathVariable Long grupoId,
+            @PathVariable Long pagoProgramadoId,
+            @RequestHeader("Authorization") String token) {
+        Long usuarioId = extraerUsuarioId(token);
+        validarMiembro(grupoId, usuarioId);
+        boolean esDirectiva = !grupoMiembroRepository.findByGrupoIdAndUsuarioId(grupoId, usuarioId)
+                .map(m -> m.getRol().name().equals("MIEMBRO")).orElse(true);
+
+        PagoProgramado pago = pagoProgramadoRepository.findById(pagoProgramadoId)
+                .filter(p -> p.getGrupo().getId().equals(grupoId))
+                .orElseThrow(() -> new ResourceNotFoundException("Pago programado no encontrado"));
+
+        List<GrupoMiembro> miembros = esDirectiva
+                ? grupoMiembroRepository.findByGrupoIdAndActivoTrue(grupoId)
+                : grupoMiembroRepository.findByGrupoIdAndUsuarioId(grupoId, usuarioId)
+                        .filter(GrupoMiembro::getActivo).map(List::of).orElse(List.of());
+
+        List<MetaPendienteResponse> metas = new java.util.ArrayList<>();
+
+        boolean cupoConfigurado = pago.getCupoCarnavalUsd() != null && pago.getTipoCambio() != null
+                && pago.getMesesRestantesCarnaval() != null && pago.getMesesRestantesCarnaval() > 0;
+        BigDecimal cupoBs = cupoConfigurado
+                ? pago.getCupoCarnavalUsd().multiply(pago.getTipoCambio()) : null;
+
+        for (GrupoMiembro gm : miembros) {
+            if (cupoConfigurado) {
+                BigDecimal aportado = kardexRepository.findByGrupoIdAndUsuarioId(grupoId, gm.getUsuario().getId())
+                        .map(k -> k.getTotalAportes().subtract(k.getTotalAhorro()))
+                        .orElse(BigDecimal.ZERO);
+                BigDecimal falta = cupoBs.subtract(aportado).max(BigDecimal.ZERO);
+                BigDecimal cuotaSugerida = falta.compareTo(BigDecimal.ZERO) > 0
+                        ? falta.divide(BigDecimal.valueOf(pago.getMesesRestantesCarnaval()), 0, RoundingMode.UP)
+                        : BigDecimal.ZERO;
+                BigDecimal avance = cupoBs.signum() > 0
+                        ? aportado.divide(cupoBs, 4, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+
+                metas.add(MetaPendienteResponse.builder()
+                        .usuarioId(gm.getUsuario().getId())
+                        .nombreUsuario(gm.getUsuario().getNombre() + " " + gm.getUsuario().getApellido())
+                        .tipo("CARNAVAL")
+                        .nombre("Cupo de Carnaval")
+                        .aportado(aportado)
+                        .cupoBs(cupoBs)
+                        .falta(falta)
+                        .cuotaSugerida(cuotaSugerida)
+                        .avance(avance)
+                        .build());
+            }
+        }
+
+        List<Pedido> pedidosAbiertos = pedidoRepository.findByGrupoIdOrderByCreadoEnDesc(grupoId)
+                .stream().filter(p -> "ABIERTO".equals(p.getEstado())).collect(Collectors.toList());
+        for (Pedido pedido : pedidosAbiertos) {
+            List<PedidoDetalle> detalles = pedidoDetalleRepository.findByPedidoId(pedido.getId());
+            java.util.Map<Long, BigDecimal> faltaPorUsuario = new java.util.HashMap<>();
+            java.util.Map<Long, GrupoMiembro> gmPorUsuario = new java.util.HashMap<>();
+            for (GrupoMiembro gm : miembros) {
+                gmPorUsuario.put(gm.getUsuario().getId(), gm);
+            }
+            for (PedidoDetalle d : detalles) {
+                Long uid = d.getUsuario().getId();
+                if (!gmPorUsuario.containsKey(uid)) continue;
+                faltaPorUsuario.merge(uid, d.getSubtotal(), BigDecimal::add);
+            }
+            for (var entry : faltaPorUsuario.entrySet()) {
+                GrupoMiembro gm = gmPorUsuario.get(entry.getKey());
+                metas.add(MetaPendienteResponse.builder()
+                        .usuarioId(gm.getUsuario().getId())
+                        .nombreUsuario(gm.getUsuario().getNombre() + " " + gm.getUsuario().getApellido())
+                        .tipo("PEDIDO")
+                        .nombre(pedido.getNombre())
+                        .falta(entry.getValue())
+                        .build());
+            }
+        }
+
+        return ResponseEntity.ok(metas);
     }
 
     @GetMapping
@@ -427,9 +575,9 @@ public class PagoProgramadoController {
                         .existsByPagoProgramadoIdAndUsuarioIdAndAnioAndMes(
                                 p.getId(), gm.getUsuario().getId(), fecha.getYear(), fecha.getMonthValue());
                 if (!existe) {
-                    BigDecimal carnaval = Boolean.FALSE.equals(gm.getParticipaCarnaval())
-                            ? BigDecimal.ZERO : p.getMontoCarnaval();
-                    BigDecimal ahorro = p.getMontoAhorro();
+                    BigDecimal[] split = calcularSplitCuota(p, gm);
+                    BigDecimal carnaval = split[0];
+                    BigDecimal ahorro = split[1];
                     CuotaProgramada cuota = CuotaProgramada.builder()
                             .pagoProgramado(p)
                             .usuario(gm.getUsuario())
@@ -518,9 +666,9 @@ public class PagoProgramadoController {
                     .existsByPagoProgramadoIdAndUsuarioIdAndAnioAndMes(
                             pago.getId(), usuarioId, fecha.getYear(), fecha.getMonthValue());
             if (!existe) {
-                BigDecimal carnaval = Boolean.FALSE.equals(miembro.getParticipaCarnaval())
-                        ? BigDecimal.ZERO : pago.getMontoCarnaval();
-                BigDecimal ahorro = pago.getMontoAhorro();
+                BigDecimal[] split = calcularSplitCuota(pago, miembro);
+                BigDecimal carnaval = split[0];
+                BigDecimal ahorro = split[1];
                 // Los meses ya transcurridos antes de hoy quedan exentos de mora: se marcan
                 // "multaAplicada=true" (en 0) para que la verificación automática de multas
                 // los ignore. Solo el mes actual en adelante puede generar mora normalmente.
@@ -608,10 +756,9 @@ public class PagoProgramadoController {
                                 pago.getId(), miembro.getUsuario().getId(),
                                 fecha.getYear(), fecha.getMonthValue());
                 if (!existe) {
-                    // Si el miembro no participa en carnaval, su cuota solo lleva el ahorro
-                    BigDecimal carnaval = Boolean.FALSE.equals(miembro.getParticipaCarnaval())
-                            ? BigDecimal.ZERO : pago.getMontoCarnaval();
-                    BigDecimal ahorro = pago.getMontoAhorro();
+                    BigDecimal[] split = calcularSplitCuota(pago, miembro);
+                    BigDecimal carnaval = split[0];
+                    BigDecimal ahorro = split[1];
                     BigDecimal total = carnaval.add(ahorro);
 
                     CuotaProgramada cuota = CuotaProgramada.builder()
@@ -634,6 +781,14 @@ public class PagoProgramadoController {
         }
     }
 
+    /** Si el miembro no participa en carnaval, su cuota solo lleva el ahorro. */
+    private BigDecimal[] calcularSplitCuota(PagoProgramado pago, GrupoMiembro miembro) {
+        BigDecimal carnaval = Boolean.FALSE.equals(miembro.getParticipaCarnaval())
+                ? BigDecimal.ZERO : pago.getMontoCarnaval();
+        BigDecimal ahorro = pago.getMontoAhorro();
+        return new BigDecimal[]{carnaval, ahorro};
+    }
+
     private PagoProgramadoResponse toResponse(PagoProgramado p) {
         return PagoProgramadoResponse.builder()
                 .id(p.getId())
@@ -649,6 +804,11 @@ public class PagoProgramadoController {
                 .montoMulta(p.getMontoMulta())
                 .porcentajeMulta(p.getPorcentajeMulta())
                 .activo(p.getActivo())
+                .cupoCarnavalUsd(p.getCupoCarnavalUsd())
+                .tipoCambio(p.getTipoCambio())
+                .mesesRestantesCarnaval(p.getMesesRestantesCarnaval())
+                .cupoCarnavalBs(p.getCupoCarnavalUsd() != null && p.getTipoCambio() != null
+                        ? p.getCupoCarnavalUsd().multiply(p.getTipoCambio()) : null)
                 .build();
     }
 
